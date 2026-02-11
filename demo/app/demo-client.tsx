@@ -597,8 +597,17 @@ export default function DemoClient() {
               </div>
             ))}
           </div>
-          <p className="mt-4 text-center text-[10px] text-zinc-600">
-            Built with Clarity 4 + @stacks/connect + Next.js -- x402 protocol v2
+          <p className="mt-6 text-center text-[11px] text-zinc-500">
+            Built by{" "}
+            <a
+              href="https://fixr.nexus"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-indigo-400 hover:text-indigo-300 underline decoration-indigo-400/30"
+            >
+              Fixr
+            </a>
+            {" "}with Clarity 4 + @stacks/connect + Next.js -- x402 protocol v2
           </p>
         </section>
       </main>
