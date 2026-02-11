@@ -1,0 +1,53 @@
+# x402 on Stacks
+
+> First implementation of the x402 micropayment protocol on Stacks (Bitcoin L2). Pay 0.01 STX to access gated API endpoints via a Clarity smart contract with nonce replay protection and Stacks post-conditions.
+
+## What is x402?
+
+x402 is a protocol for HTTP-native micropayments. It extends the semantics of HTTP 402 Payment Required with structured headers so that any API endpoint can demand payment and any client can fulfill it programmatically.
+
+## How it works
+
+1. Client sends GET request to a gated endpoint
+2. Server returns HTTP 402 with `PAYMENT-REQUIRED` header (base64-encoded JSON with price, contract, network)
+3. Client signs a Stacks contract call (`pay-stx`) with a unique nonce
+4. Client waits for on-chain confirmation
+5. Client retries the request with `PAYMENT-SIGNATURE` header containing the txId and nonce
+6. Server verifies the payment on-chain and returns the gated resource with `PAYMENT-RESPONSE` header
+
+## Smart Contract
+
+- **Contract ID**: ST356P5YEXBJC1ZANBWBNR0N0X7NT8AV7FZ017K55.x402-payments
+- **Language**: Clarity 4
+- **Network**: Stacks testnet
+- **Features**: STX payments, SIP-010 token payments (sBTC), nonce replay protection, protocol fee (configurable up to 10%), two-step admin transfer, payment verification read-only functions
+
+## Contract Functions
+
+### Public Functions
+- `pay-stx(recipient, amount, nonce)` -- Pay STX through the protocol with replay protection
+- `pay-token(token, recipient, amount, nonce)` -- Pay SIP-010 tokens through the protocol
+- `set-fee(new-fee)` -- Set protocol fee (admin only, max 1000 bps = 10%)
+- `transfer-admin(new-admin)` -- Initiate admin transfer
+- `accept-admin()` -- Accept pending admin transfer
+
+### Read-Only Functions
+- `verify-payment(tx-sender, nonce)` -- Check if a payment was made with a given nonce
+- `get-payment(tx-sender, nonce)` -- Get full payment details (recipient, amount, block)
+- `get-fee()` -- Get current protocol fee in basis points
+- `get-admin()` -- Get current admin address
+
+## Tech Stack
+
+- Clarity 4 smart contract on Stacks
+- TypeScript SDK (server + client helpers)
+- Next.js 16 demo app
+- @stacks/connect v8 (SIP-030 wallet RPC)
+- @stacks/transactions v7
+
+## Links
+
+- Demo: https://x402-stacks.fixr.nexus
+- Source: https://github.com/the-fixr/x402-stacks
+- Stacks Explorer: https://explorer.hiro.so/txid/ST356P5YEXBJC1ZANBWBNR0N0X7NT8AV7FZ017K55.x402-payments?chain=testnet
+- x402 Protocol: https://www.x402.org

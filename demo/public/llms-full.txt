@@ -1,0 +1,216 @@
+# x402 on Stacks — Full Technical Reference
+
+> First implementation of the x402 micropayment protocol on Stacks (Bitcoin L2). This document provides complete technical details for LLMs and AI agents to understand and integrate with the protocol.
+
+## Protocol Overview
+
+x402 is an HTTP-native micropayment protocol that uses the HTTP 402 status code. It enables pay-per-call APIs where payment happens on-chain via smart contracts and proof is passed through HTTP headers.
+
+### Protocol Version: 2
+
+### Flow
+
+```
+Client                          Server                         Stacks Chain
+  |                               |                               |
+  |-- GET /api/resource --------->|                               |
+  |<- 402 + PAYMENT-REQUIRED ----|                               |
+  |                               |                               |
+  |-- call pay-stx(to, amt, nonce) --------------------------->  |
+  |<- txId confirmed ------------|------- verify on-chain ------->|
+  |                               |                               |
+  |-- GET /api/resource           |                               |
+  |   + PAYMENT-SIGNATURE ------->|                               |
+  |                               |-- verify-payment(sender,nonce)|
+  |<- 200 + PAYMENT-RESPONSE ----|                               |
+```
+
+## Headers
+
+### PAYMENT-REQUIRED (402 Response)
+Base64-encoded JSON:
+```json
+{
+  "x402Version": 2,
+  "error": "Payment required",
+  "resource": {
+    "url": "https://example.com/api/analyze?token=STX",
+    "description": "Stacks token analysis",
+    "mimeType": "application/json"
+  },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "stacks:2147483648",
+      "asset": "STX",
+      "amount": "10000",
+      "payTo": "ST2CY5V39NHDPWSXMW9QDT3HC3GD6Q6XX4CFRK9AG",
+      "maxTimeoutSeconds": 300,
+      "extra": {
+        "contractAddress": "ST356P5YEXBJC1ZANBWBNR0N0X7NT8AV7FZ017K55",
+        "contractName": "x402-payments"
+      }
+    }
+  ]
+}
+```
+
+### PAYMENT-SIGNATURE (Retry Request)
+Base64-encoded JSON:
+```json
+{
+  "x402Version": 2,
+  "scheme": "exact",
+  "network": "stacks:2147483648",
+  "payload": {
+    "txId": "0xabc123...",
+    "nonce": "a1b2c3d4e5f6..."
+  }
+}
+```
+
+### PAYMENT-RESPONSE (200 Response)
+Base64-encoded JSON:
+```json
+{
+  "success": true,
+  "transaction": "0xabc123...",
+  "network": "stacks:2147483648"
+}
+```
+
+## Smart Contract: x402-payments
+
+### Deployment
+- **Contract ID**: `ST356P5YEXBJC1ZANBWBNR0N0X7NT8AV7FZ017K55.x402-payments`
+- **Network**: Stacks testnet (chain ID 2147483648)
+- **Language**: Clarity 4
+- **Deploy TX**: `8f55d1b3f954e99fb6dc5e4dbd4f5f00c04ac2488c29cff39ee92f72e4a5dfa4`
+
+### Data Maps
+- `payments`: `{ sender: principal, nonce: (buff 16) } -> { recipient: principal, amount: uint, token: (optional principal), block: uint }`
+- `nonce-used`: `{ sender: principal, nonce: (buff 16) } -> bool`
+
+### Data Variables
+- `admin`: principal (contract deployer)
+- `pending-admin`: optional principal
+- `fee-bps`: uint (default 0, max 1000)
+
+### Public Functions
+
+#### `pay-stx (recipient principal) (amount uint) (nonce (buff 16))`
+Transfers STX from tx-sender to recipient via the contract. Stores payment record and marks nonce as used. Deducts protocol fee if set.
+- **Errors**: u100 (zero amount), u101 (empty nonce), u102 (nonce already used), u103 (transfer failed), u104 (self-payment)
+
+#### `pay-token (token <sip-010-trait>) (recipient principal) (amount uint) (nonce (buff 16))`
+Same as pay-stx but for any SIP-010 fungible token.
+- **Errors**: same as pay-stx plus u105 (token transfer failed)
+
+#### `set-fee (new-fee uint)`
+Sets protocol fee in basis points (0-1000 = 0-10%). Admin only.
+- **Errors**: u200 (not admin), u201 (fee too high)
+
+#### `transfer-admin (new-admin principal)`
+Initiates two-step admin transfer. Admin only.
+- **Errors**: u200 (not admin)
+
+#### `accept-admin ()`
+Accepts pending admin transfer. Must be called by the pending admin.
+- **Errors**: u203 (no pending admin), u204 (not the pending admin)
+
+### Read-Only Functions
+
+#### `verify-payment (sender principal) (nonce (buff 16)) -> bool`
+Returns true if a payment with this sender+nonce exists.
+
+#### `get-payment (sender principal) (nonce (buff 16)) -> (optional { recipient, amount, token, block })`
+Returns full payment details or none.
+
+#### `get-fee () -> uint`
+Returns current fee in basis points.
+
+#### `get-admin () -> principal`
+Returns current admin.
+
+## TypeScript SDK
+
+### Server-Side (`sdk/server.ts`)
+```typescript
+import { createPaymentRequiredResponse, verifyPaymentHeader } from "x402-stacks/sdk/server";
+
+// In your API route:
+if (!paymentHeader) {
+  return createPaymentRequiredResponse({
+    contractAddress: "ST356...",
+    contractName: "x402-payments",
+    payTo: "ST2CY...",
+    amount: "10000",
+    network: "stacks:2147483648",
+  });
+}
+
+const verified = await verifyPaymentHeader(paymentHeader, { apiUrl: "https://api.testnet.hiro.so" });
+```
+
+### Client-Side (`sdk/client.ts`)
+```typescript
+import { createPaymentSignature, parsePaymentRequired } from "x402-stacks/sdk/client";
+
+const resp = await fetch("/api/resource");
+if (resp.status === 402) {
+  const requirements = parsePaymentRequired(resp.headers.get("PAYMENT-REQUIRED"));
+  // ... sign transaction with @stacks/connect ...
+  const signature = createPaymentSignature({ txId, nonce });
+  const paidResp = await fetch("/api/resource", {
+    headers: { "PAYMENT-SIGNATURE": signature },
+  });
+}
+```
+
+### Types (`sdk/types.ts`)
+```typescript
+interface X402PaymentRequired {
+  x402Version: number;
+  error: string;
+  resource: { url: string; description: string; mimeType: string };
+  accepts: X402PaymentOption[];
+}
+
+interface X402PaymentOption {
+  scheme: "exact";
+  network: string;
+  asset: string;
+  amount: string;
+  payTo: string;
+  maxTimeoutSeconds: number;
+  extra?: { contractAddress: string; contractName: string };
+}
+
+interface X402PaymentSignature {
+  x402Version: number;
+  scheme: "exact";
+  network: string;
+  payload: { txId: string; nonce: string };
+}
+```
+
+## Integration Guide for AI Agents
+
+To programmatically pay for an x402-gated resource on Stacks:
+
+1. Make a GET request to the gated endpoint
+2. If you receive HTTP 402, decode the `PAYMENT-REQUIRED` header (base64 -> JSON)
+3. Extract `contractAddress`, `contractName`, `payTo`, and `amount` from the `accepts` array
+4. Generate a random 16-byte nonce
+5. Call the contract's `pay-stx` function with (payTo, amount, nonce) using a Stacks wallet/keypair
+6. Wait for transaction confirmation on Stacks
+7. Retry the original request with `PAYMENT-SIGNATURE` header containing the base64-encoded proof
+8. Parse the 200 response normally
+
+## Source Code
+
+- Repository: https://github.com/the-fixr/x402-stacks
+- Contract: `contracts/x402-payments.clar`
+- SDK: `sdk/` directory
+- Demo: `demo/` directory (Next.js 16)
+- Tests: `tests/x402-payments.test.ts` (17 passing, vitest + clarinet-sdk)
