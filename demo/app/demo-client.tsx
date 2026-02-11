@@ -2,12 +2,9 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { connect, request } from "@stacks/connect";
-import {
-  uintCV,
-  bufferCV,
-  standardPrincipalCV,
-} from "@stacks/transactions";
+// Dynamic imports at call-time to avoid webpack chunk-splitting issues
+// with @stacks/connect-ui Lit web components in production builds.
+// Type-only imports are safe (erased at compile time).
 import type { StxPostCondition } from "@stacks/transactions";
 
 const CONTRACT_ADDRESS = "ST356P5YEXBJC1ZANBWBNR0N0X7NT8AV7FZ017K55";
@@ -200,6 +197,7 @@ export default function DemoClient() {
   }, [steps]);
 
   const connectWallet = useCallback(async (): Promise<string> => {
+    const { connect } = await import("@stacks/connect");
     const result = await connect({ network: "testnet" });
     // Find a testnet (ST...) address from the returned addresses
     const stxAddr = result.addresses.find((a) =>
@@ -287,6 +285,11 @@ export default function DemoClient() {
         status: "active",
         detail: `Nonce: 0x${nonceHex}\nAmount: ${amount} microSTX (0.01 STX)\nContract: ${CONTRACT_ID}\nRecipient: ${PAY_TO}\nFunction: pay-stx(recipient, amount, nonce)\n\nOpening wallet for signature...`,
       });
+
+      const { request } = await import("@stacks/connect");
+      const { uintCV, bufferCV, standardPrincipalCV } = await import(
+        "@stacks/transactions"
+      );
 
       const stxPostCondition: StxPostCondition = {
         type: "stx-postcondition",
