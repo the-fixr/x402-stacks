@@ -4,7 +4,7 @@
  * 1. Fixr launches a token on agent-launchpad
  * 2. Generates a second wallet, funds it from Fixr
  * 3. Second agent registers in agent-registry
- * 4. Second agent pays Fixr via x402-curve-router (buys tokens on Fixr's curve)
+ * 4. Second agent pays Fixr via x402-curve-router-v2 (buys tokens on Fixr's curve)
  * 5. Verifies everything via read-only calls
  *
  * Run: npx tsx scripts/e2e-test.ts
@@ -214,7 +214,7 @@ function cvToJSON(cv: ClarityValue): unknown {
 async function main() {
   console.log("═══════════════════════════════════════════════════════════");
   console.log("  Agent Protocol — E2E Testnet Demonstration (v2)");
-  console.log("  Uses x402-curve-router: payment = token purchase");
+  console.log("  Uses x402-curve-router-v2: payment = token purchase");
   console.log("═══════════════════════════════════════════════════════════\n");
 
   // ── Setup wallets ──────────────────────────────────────────────────────
@@ -288,10 +288,10 @@ async function main() {
   await waitForTx(registerTxid);
   agent2Nonce = a2N1;
 
-  // ── Step 3: Agent2 pays Fixr via x402-curve-router ─────────────────────
+  // ── Step 3: Agent2 pays Fixr via x402-curve-router-v2 ─────────────────────
   // One transaction: pays STX, buys tokens on Fixr's curve, records receipt
 
-  console.log("\n5. Agent2 pays Fixr via x402-curve-router (5 STX)\n");
+  console.log("\n5. Agent2 pays Fixr via x402-curve-router-v2 (5 STX)\n");
   console.log("   -> STX enters Fixr's bonding curve");
   console.log("   -> Agent2 receives tokens");
   console.log("   -> Fixr earns 80% of accrued fees at graduation\n");
@@ -300,7 +300,7 @@ async function main() {
   console.log(`  Payment nonce: 0x${paymentNonce.toString("hex")}`);
 
   const { txid: payViaCurveTxid, nextNonce: a2N2 } = await sendTx({
-    contract: "x402-curve-router",
+    contract: "x402-curve-router-v2",
     fn: "pay-via-curve",
     args: [
       Cl.uint(0), // curve-id 0 (Fixr's curve)
@@ -348,16 +348,16 @@ async function main() {
   ]);
   printCV("Fixr's curve", agentCurveCV);
 
-  // 5. x402-curve-router payment receipt
-  console.log("\n  [5] x402-curve-router.verify-payment(nonce)");
-  const routerReceiptCV = await readOnly("x402-curve-router", "verify-payment", [
+  // 5. x402-curve-router-v2 payment receipt
+  console.log("\n  [5] x402-curve-router-v2.verify-payment(nonce)");
+  const routerReceiptCV = await readOnly("x402-curve-router-v2", "verify-payment", [
     Cl.buffer(paymentNonce),
   ]);
   printCV("Curve router receipt", routerReceiptCV);
 
   // 6. Router stats
-  console.log("\n  [6] x402-curve-router.get-stats()");
-  const routerStatsCV = await readOnly("x402-curve-router", "get-stats", []);
+  console.log("\n  [6] x402-curve-router-v2.get-stats()");
+  const routerStatsCV = await readOnly("x402-curve-router-v2", "get-stats", []);
   printCV("Router stats", routerStatsCV);
 
   // 7. Agent2 registration
@@ -383,7 +383,7 @@ async function main() {
   console.log(`  Launch tx:         ${launchTxid}`);
   console.log(`  Register tx:       ${registerTxid}`);
   console.log(`  pay-via-curve tx:  ${payViaCurveTxid}`);
-  console.log("\n  Flow: Agent2 paid Fixr 5 STX via x402-curve-router");
+  console.log("\n  Flow: Agent2 paid Fixr 5 STX via x402-curve-router-v2");
   console.log("    -> STX went into Fixr's bonding curve reserve");
   console.log("    -> Agent2 received tokens proportional to the curve price");
   console.log("    -> 1% trade fee accrues for Fixr (80% at graduation)");

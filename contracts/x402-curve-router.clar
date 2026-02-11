@@ -14,6 +14,7 @@
 (define-constant ERR-ZERO-AMOUNT (err u1501))
 (define-constant ERR-CURVE-NOT-FOUND (err u1502))
 (define-constant ERR-UNAUTHORIZED (err u1503))
+(define-constant ERR-BELOW-MINIMUM (err u1504))
 
 ;; ============================================================================
 ;; STATE
@@ -53,10 +54,20 @@
     (nonce (buff 16))
     (min-tokens-out uint)
   )
-  (begin
+  (let
+    (
+      ;; Look up the curve to find the agent creator
+      (curve (unwrap! (contract-call? .agent-launchpad get-curve curve-id) ERR-CURVE-NOT-FOUND))
+      (creator (get creator curve))
+      ;; Look up the agent's minimum price-per-task
+      (agent (unwrap! (contract-call? .agent-registry get-agent creator) ERR-CURVE-NOT-FOUND))
+      (min-price (get price-per-task agent))
+    )
     ;; Nonce must be unused
     (asserts! (is-none (map-get? receipts { nonce: nonce })) ERR-NONCE-USED)
     (asserts! (> stx-amount u0) ERR-ZERO-AMOUNT)
+    ;; Payment must meet the agent's minimum price
+    (asserts! (>= stx-amount min-price) ERR-BELOW-MINIMUM)
 
     ;; Buy tokens on the curve
     ;; tx-sender's STX goes to the curve, tokens credited to tx-sender

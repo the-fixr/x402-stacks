@@ -135,6 +135,50 @@ describe("x402-curve-router", () => {
     expect(result.result).toBeErr(Cl.uint(1501)); // ERR-ZERO-AMOUNT
   });
 
+  it("fails below agent minimum price", () => {
+    // Agent registers with price-per-task = 1_000_000 (1 STX)
+    registerAndLaunch(deployer);
+
+    // Try to pay only 0.5 STX - below the 1 STX minimum
+    const result = simnet.callPublicFn(
+      router,
+      "pay-via-curve",
+      [Cl.uint(0), Cl.uint(500_000), nonce(350), Cl.uint(0)],
+      wallet1
+    );
+    expect(result.result).toBeErr(Cl.uint(1504)); // ERR-BELOW-MINIMUM
+  });
+
+  it("succeeds at exact minimum price", () => {
+    // Agent's price-per-task is 1_000_000 (1 STX)
+    registerAndLaunch(deployer);
+
+    // Pay exactly the minimum
+    const result = simnet.callPublicFn(
+      router,
+      "pay-via-curve",
+      [Cl.uint(0), Cl.uint(1_000_000), nonce(351), Cl.uint(0)],
+      wallet1
+    );
+    expect(result.result.type).toBe(Cl.ok(Cl.uint(0)).type);
+  });
+
+  it("succeeds above minimum - payer gets more tokens", () => {
+    // Agent's price-per-task is 1_000_000 (1 STX)
+    registerAndLaunch(deployer);
+
+    // Pay 5x the minimum - should work, payer gets more tokens
+    const result = simnet.callPublicFn(
+      router,
+      "pay-via-curve",
+      [Cl.uint(0), Cl.uint(5_000_000), nonce(352), Cl.uint(0)],
+      wallet1
+    );
+    expect(result.result.type).toBe(Cl.ok(Cl.uint(0)).type);
+    const tokensOut = BigInt((result.result as any).value.value["tokens-received"].value);
+    expect(tokensOut).toBeGreaterThan(0n);
+  });
+
   it("fails with invalid curve-id", () => {
     const result = simnet.callPublicFn(
       router,
@@ -142,7 +186,7 @@ describe("x402-curve-router", () => {
       [Cl.uint(99), Cl.uint(1_000_000), nonce(400), Cl.uint(0)],
       wallet1
     );
-    expect(result.result).toBeErr(Cl.uint(1402)); // ERR-CURVE-NOT-FOUND
+    expect(result.result).toBeErr(Cl.uint(1502)); // ERR-CURVE-NOT-FOUND (router's own lookup)
   });
 
   it("respects slippage protection", () => {
@@ -299,11 +343,11 @@ describe("x402-curve-router", () => {
       wallet2
     );
 
-    // Pay via curve on graduated curve should fail
+    // Pay via curve on graduated curve should fail (amount >= min price)
     const result = simnet.callPublicFn(
       router,
       "pay-via-curve",
-      [Cl.uint(1), Cl.uint(100_000), nonce(999), Cl.uint(0)],
+      [Cl.uint(1), Cl.uint(1_000_000), nonce(999), Cl.uint(0)],
       wallet2
     );
     expect(result.result).toBeErr(Cl.uint(1403)); // ERR-GRADUATED

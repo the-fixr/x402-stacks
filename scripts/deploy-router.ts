@@ -43,7 +43,7 @@ async function main() {
 
   // Deploy
   const tx = await makeContractDeploy({
-    contractName: "x402-curve-router",
+    contractName: "x402-curve-router-v2",
     codeBody,
     senderKey: privateKey,
     nonce,
@@ -75,7 +75,7 @@ async function main() {
       const resp = await fetch(`${API}/extended/v1/tx/${txid}`);
       const data = (await resp.json()) as { tx_status: string };
       if (data.tx_status === "success") {
-        console.log(`  ✓ Deployed! ${DEPLOYER}.x402-curve-router`);
+        console.log(`  ✓ Deployed! ${DEPLOYER}.x402-curve-router-v2`);
         return;
       }
       if (
