@@ -1,0 +1,55 @@
+---
+id: 0
+name: Testnet deployment - Agent Protocol
+network: testnet
+stacks-node: "https://api.testnet.hiro.so"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
+plan:
+  batches:
+    - id: 0
+      transactions:
+        - contract-publish:
+            contract-name: agent-registry
+            expected-sender: ST356P5YEXBJC1ZANBWBNR0N0X7NT8AV7FZ017K55
+            cost: 100000
+            path: contracts/agent-registry.clar
+            anchor-block-only: true
+            clarity-version: 4
+      epoch: "3.3"
+    - id: 1
+      transactions:
+        - contract-publish:
+            contract-name: agent-vault
+            expected-sender: ST356P5YEXBJC1ZANBWBNR0N0X7NT8AV7FZ017K55
+            cost: 120000
+            path: contracts/agent-vault.clar
+            anchor-block-only: true
+            clarity-version: 4
+        - contract-publish:
+            contract-name: reputation
+            expected-sender: ST356P5YEXBJC1ZANBWBNR0N0X7NT8AV7FZ017K55
+            cost: 100000
+            path: contracts/reputation.clar
+            anchor-block-only: true
+            clarity-version: 4
+      epoch: "3.3"
+    - id: 2
+      transactions:
+        - contract-publish:
+            contract-name: task-board
+            expected-sender: ST356P5YEXBJC1ZANBWBNR0N0X7NT8AV7FZ017K55
+            cost: 150000
+            path: contracts/task-board.clar
+            anchor-block-only: true
+            clarity-version: 4
+      epoch: "3.3"
+    - id: 3
+      transactions:
+        - contract-publish:
+            contract-name: agent-launchpad
+            expected-sender: ST356P5YEXBJC1ZANBWBNR0N0X7NT8AV7FZ017K55
+            cost: 200000
+            path: contracts/agent-launchpad.clar
+            anchor-block-only: true
+            clarity-version: 4
+      epoch: "3.3"
