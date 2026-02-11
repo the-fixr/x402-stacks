@@ -34,6 +34,11 @@ epoch = 'latest'
 path = 'contracts/agent-launchpad.clar'
 clarity_version = 4
 epoch = 'latest'
+
+[contracts.x402-curve-router]
+path = 'contracts/x402-curve-router.clar'
+clarity_version = 4
+epoch = 'latest'
 [repl.analysis]
 passes = [
     'check_checker',

@@ -1,0 +1,18 @@
+---
+id: 0
+name: Testnet deployment - x402 Curve Router
+network: testnet
+stacks-node: "https://api.testnet.hiro.so"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
+plan:
+  batches:
+    - id: 0
+      transactions:
+        - contract-publish:
+            contract-name: x402-curve-router
+            expected-sender: ST356P5YEXBJC1ZANBWBNR0N0X7NT8AV7FZ017K55
+            cost: 100000
+            path: contracts/x402-curve-router.clar
+            anchor-block-only: true
+            clarity-version: 4
+      epoch: "3.3"
