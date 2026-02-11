@@ -15,3 +15,4 @@ deployments
 .DS_Store
 .vscode
 package-lock.json
+.vercel
