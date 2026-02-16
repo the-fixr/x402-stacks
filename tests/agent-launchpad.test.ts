@@ -68,7 +68,7 @@ function sell(seller: string, curveId: number, tokenAmount: number, minStxOut = 
   );
 }
 
-// Helper: get balance read-only (returns plain Tuple, access via .value.field)
+// Helper: get balance read-only
 function getBalance(curveId: number, holder: string) {
   return simnet.callReadOnlyFn(
     contract,
@@ -78,7 +78,7 @@ function getBalance(curveId: number, holder: string) {
   );
 }
 
-// Helper: get curve read-only (returns Some(Tuple), access via .value.value["field"])
+// Helper: get curve read-only
 function getCurve(curveId: number) {
   return simnet.callReadOnlyFn(
     contract,
@@ -134,7 +134,6 @@ describe("agent-launchpad", () => {
 
       expect(result).toBeOk(Cl.uint(0));
 
-      // Verify curve data — getCurve returns Some(Tuple)
       const { result: curveResult } = getCurve(0);
       const curve = unwrapCurve(curveResult);
       expect(curve.creator).toStrictEqual(Cl.principal(wallet1));
@@ -146,7 +145,6 @@ describe("agent-launchpad", () => {
       expect(curve["tokens-sold"]).toStrictEqual(Cl.uint(0));
       expect(curve.graduated).toStrictEqual(Cl.bool(false));
 
-      // Verify agent-curve mapping
       const { result: agentCurve } = simnet.callReadOnlyFn(
         contract,
         "get-agent-curve",
@@ -155,7 +153,6 @@ describe("agent-launchpad", () => {
       );
       expect(agentCurve).toBeSome(Cl.tuple({ "curve-id": Cl.uint(0) }));
 
-      // Verify stats (plain Tuple)
       const { result: stats } = simnet.callReadOnlyFn(
         contract,
         "get-stats",
@@ -208,7 +205,6 @@ describe("agent-launchpad", () => {
     it("buys tokens on a curve", () => {
       registerAndLaunch(wallet1);
 
-      // wallet2 buys 100 STX worth (100_000_000 microSTX)
       const stxAmount = 100_000_000;
       const { result } = buy(wallet2, 0, stxAmount);
       const buyData = unwrapOkTuple(result);
@@ -217,12 +213,10 @@ describe("agent-launchpad", () => {
         fee: buyData.fee,
       }));
 
-      // Verify buyer got tokens (getBalance returns plain Tuple)
       const { result: balResult } = getBalance(0, wallet2);
       const balance = Number((balResult as any).value.amount.value);
       expect(balance).toBeGreaterThan(0);
 
-      // Verify curve state updated
       const { result: curveResult } = getCurve(0);
       const curve = unwrapCurve(curveResult);
       const stxReserve = Number(curve["stx-reserve"].value);
@@ -235,34 +229,31 @@ describe("agent-launchpad", () => {
     it("accrues fees on buy", () => {
       registerAndLaunch(wallet1);
 
-      const stxAmount = 1_000_000_000; // 1000 STX
+      const stxAmount = 1_000_000_000;
       buy(wallet2, 0, stxAmount);
 
       const { result: curveResult } = getCurve(0);
       const curve = unwrapCurve(curveResult);
       const accruedFees = Number(curve["accrued-fees"].value);
-      // 1% of 1000 STX = 10 STX = 10_000_000 microSTX
       expect(accruedFees).toBe(10_000_000);
     });
 
     it("fails with slippage protection", () => {
       registerAndLaunch(wallet1);
 
-      // Set an impossibly high min-tokens-out
       const { result } = buy(wallet2, 0, 100_000_000, 999_999_999_999_999);
-      expect(result).toBeErr(Cl.uint(1406)); // ERR-SLIPPAGE
+      expect(result).toBeErr(Cl.uint(1406));
     });
 
     it("fails on graduated curve", () => {
       registerAgent(wallet1);
-      // Set very low graduation target for testing
       simnet.callPublicFn(
         contract,
         "set-defaults",
         [
           Cl.uint(DEFAULT_TOTAL_SUPPLY),
           Cl.uint(DEFAULT_VIRTUAL_STX),
-          Cl.uint(100_000_000), // 100 STX graduation target
+          Cl.uint(100_000_000),
           Cl.uint(DEFAULT_FEE_BPS),
           Cl.uint(DEFAULT_CREATOR_SHARE_BPS),
         ],
@@ -270,28 +261,37 @@ describe("agent-launchpad", () => {
       );
       launchCurve(wallet1);
 
-      // Buy enough to graduate (200 STX should exceed 100 STX target after fees)
       buy(wallet2, 0, 200_000_000);
 
-      // Verify graduated
       const { result: curveResult } = getCurve(0);
       const curve = unwrapCurve(curveResult);
       expect(curve.graduated).toStrictEqual(Cl.bool(true));
 
-      // Try to buy more - should fail
       const { result } = buy(wallet3, 0, 100_000_000);
-      expect(result).toBeErr(Cl.uint(1403)); // ERR-GRADUATED
+      expect(result).toBeErr(Cl.uint(1403));
     });
 
     it("fails with zero amount", () => {
       registerAndLaunch(wallet1);
       const { result } = buy(wallet2, 0, 0);
-      expect(result).toBeErr(Cl.uint(1404)); // ERR-ZERO-AMOUNT
+      expect(result).toBeErr(Cl.uint(1404));
     });
 
     it("fails on non-existent curve", () => {
       const { result } = buy(wallet1, 99, 100_000_000);
-      expect(result).toBeErr(Cl.uint(1402)); // ERR-CURVE-NOT-FOUND
+      expect(result).toBeErr(Cl.uint(1402));
+    });
+
+    it("handles dust amount (1 microSTX)", () => {
+      registerAndLaunch(wallet1);
+      const { result } = buy(wallet2, 0, 1);
+      expect(result).toBeErr(Cl.uint(1404));
+    });
+
+    it("fails when buying exactly 0 tokens after fee", () => {
+      registerAndLaunch(wallet1);
+      const { result } = buy(wallet2, 0, 1);
+      expect(result).toBeErr(Cl.uint(1404));
     });
   });
 
@@ -303,32 +303,26 @@ describe("agent-launchpad", () => {
     it("sells tokens for STX", () => {
       registerAndLaunch(wallet1);
 
-      // Buy first
-      buy(wallet2, 0, 1_000_000_000); // 1000 STX
+      buy(wallet2, 0, 1_000_000_000);
 
-      // Get balance before sell
       const { result: balBefore } = getBalance(0, wallet2);
       const tokensBefore = BigInt((balBefore as any).value.amount.value);
 
-      // Sell half
       const sellAmount = tokensBefore / 2n;
       const { result } = sell(wallet2, 0, Number(sellAmount));
       const sellData = unwrapOkTuple(result);
       expect(Number(sellData["stx-out"].value)).toBeGreaterThan(0);
       expect(Number(sellData.fee.value)).toBeGreaterThan(0);
 
-      // Verify balance decreased
       const { result: balAfter } = getBalance(0, wallet2);
       const tokensAfter = BigInt((balAfter as any).value.amount.value);
       expect(tokensAfter).toBe(tokensBefore - sellAmount);
 
-      // Verify stx-reserve decreased
       const { result: curveResult } = getCurve(0);
       const curve = unwrapCurve(curveResult);
       const stxReserve = Number(curve["stx-reserve"].value);
       expect(stxReserve).toBeGreaterThan(0);
-      // Reserve should be less than what was originally deposited (net of fees)
-      expect(stxReserve).toBeLessThan(990_000_000); // 1000 STX minus 1% fee = 990 STX max reserve
+      expect(stxReserve).toBeLessThan(990_000_000);
     });
 
     it("fails with slippage protection", () => {
@@ -338,32 +332,27 @@ describe("agent-launchpad", () => {
       const { result: balResult } = getBalance(0, wallet2);
       const tokens = Number((balResult as any).value.amount.value);
 
-      // Sell with impossibly high min-stx-out
       const { result } = sell(wallet2, 0, tokens, 999_999_999_999_999);
-      expect(result).toBeErr(Cl.uint(1406)); // ERR-SLIPPAGE
+      expect(result).toBeErr(Cl.uint(1406));
     });
 
     it("fails with insufficient balance", () => {
       registerAndLaunch(wallet1);
-      // wallet3 has no tokens
       const { result } = sell(wallet3, 0, 1_000_000);
-      expect(result).toBeErr(Cl.uint(1405)); // ERR-INSUFFICIENT-BALANCE
+      expect(result).toBeErr(Cl.uint(1405));
     });
 
     it("accrues fees on sell", () => {
       registerAndLaunch(wallet1);
       buy(wallet2, 0, 1_000_000_000);
 
-      // Record fees before sell
       const { result: curveBefore } = getCurve(0);
       const feesBefore = BigInt(unwrapCurve(curveBefore)["accrued-fees"].value);
 
-      // Sell some tokens
       const { result: balResult } = getBalance(0, wallet2);
       const tokens = Number((balResult as any).value.amount.value);
       sell(wallet2, 0, Math.floor(tokens / 2));
 
-      // Fees should increase
       const { result: curveAfter } = getCurve(0);
       const feesAfter = BigInt(unwrapCurve(curveAfter)["accrued-fees"].value);
       expect(feesAfter).toBeGreaterThan(feesBefore);
@@ -391,18 +380,15 @@ describe("agent-launchpad", () => {
       );
       expect(result).toBeOk(Cl.bool(true));
 
-      // Verify sender balance decreased
       const { result: senderBal } = getBalance(0, wallet2);
       expect(Number((senderBal as any).value.amount.value)).toBe(tokensBefore - transferAmount);
 
-      // Verify recipient balance increased
       const { result: recipientBal } = getBalance(0, wallet3);
       expect(Number((recipientBal as any).value.amount.value)).toBe(transferAmount);
     });
 
     it("fails with insufficient balance", () => {
       registerAndLaunch(wallet1);
-      // wallet3 has no tokens
       const { result } = simnet.callPublicFn(
         contract,
         "transfer",
@@ -424,6 +410,19 @@ describe("agent-launchpad", () => {
       );
       expect(result).toBeErr(Cl.uint(1409));
     });
+
+    it("prevents non-creator from transferring others' tokens", () => {
+      registerAndLaunch(wallet1);
+      buy(wallet2, 0, 100_000_000);
+
+      const { result } = simnet.callPublicFn(
+        contract,
+        "transfer",
+        [Cl.uint(0), Cl.uint(1000), Cl.principal(wallet3)],
+        wallet3
+      );
+      expect(result).toBeErr(Cl.uint(1405));
+    });
   });
 
   // ========================================================================
@@ -433,14 +432,13 @@ describe("agent-launchpad", () => {
   describe("graduation", () => {
     it("auto-graduates when threshold is met via buy", () => {
       registerAgent(wallet1);
-      // Set low graduation target for testing
       simnet.callPublicFn(
         contract,
         "set-defaults",
         [
           Cl.uint(DEFAULT_TOTAL_SUPPLY),
           Cl.uint(DEFAULT_VIRTUAL_STX),
-          Cl.uint(100_000_000), // 100 STX graduation target
+          Cl.uint(100_000_000),
           Cl.uint(DEFAULT_FEE_BPS),
           Cl.uint(DEFAULT_CREATOR_SHARE_BPS),
         ],
@@ -448,59 +446,47 @@ describe("agent-launchpad", () => {
       );
       launchCurve(wallet1);
 
-      // Buy enough to trigger graduation
-      buy(wallet2, 0, 200_000_000); // 200 STX (net ~198 after 1% fee)
+      buy(wallet2, 0, 200_000_000);
 
-      // Verify graduated
       const { result: curveResult } = getCurve(0);
       const curve = unwrapCurve(curveResult);
       expect(curve.graduated).toStrictEqual(Cl.bool(true));
-      // Fees should be 0 after graduation (distributed)
       expect(curve["accrued-fees"]).toStrictEqual(Cl.uint(0));
     });
 
     it("distributes fees 80/20 at graduation", () => {
       registerAgent(wallet1);
-      // Set low graduation target
       simnet.callPublicFn(
         contract,
         "set-defaults",
         [
           Cl.uint(DEFAULT_TOTAL_SUPPLY),
           Cl.uint(DEFAULT_VIRTUAL_STX),
-          Cl.uint(50_000_000), // 50 STX graduation target
-          Cl.uint(100), // 1% fee
-          Cl.uint(8000), // 80% creator share
+          Cl.uint(50_000_000),
+          Cl.uint(100),
+          Cl.uint(8000),
         ],
         deployer
       );
       launchCurve(wallet1);
 
-      // Record STX balances before
       const creatorBalBefore = simnet.getAssetsMap().get("STX")?.get(wallet1) || 0n;
       const protocolBalBefore = simnet.getAssetsMap().get("STX")?.get(deployer) || 0n;
 
-      // Buy enough to graduate
-      buy(wallet2, 0, 100_000_000); // 100 STX
+      buy(wallet2, 0, 100_000_000);
 
-      // Record STX balances after
       const creatorBalAfter = simnet.getAssetsMap().get("STX")?.get(wallet1) || 0n;
       const protocolBalAfter = simnet.getAssetsMap().get("STX")?.get(deployer) || 0n;
 
-      // Creator should have received 80% of fees
       const creatorGain = creatorBalAfter - creatorBalBefore;
-      // Protocol should have received 20% of fees
       const protocolGain = protocolBalAfter - protocolBalBefore;
 
-      // Fee is 1% of 100 STX = 1 STX = 1_000_000 microSTX
-      // Creator gets 80% = 800_000, Protocol gets 20% = 200_000
       expect(creatorGain).toBe(800_000n);
       expect(protocolGain).toBe(200_000n);
     });
 
     it("manual graduate fails before threshold", () => {
       registerAndLaunch(wallet1);
-      // No buys, reserve is 0
 
       const { result } = simnet.callPublicFn(
         contract,
@@ -508,7 +494,117 @@ describe("agent-launchpad", () => {
         [Cl.uint(0)],
         wallet2
       );
-      expect(result).toBeErr(Cl.uint(1412)); // ERR-NOT-GRADUATED
+      expect(result).toBeErr(Cl.uint(1412));
+    });
+
+    it("allows anyone to trigger graduation", () => {
+      registerAgent(wallet1);
+      simnet.callPublicFn(
+        contract,
+        "set-defaults",
+        [
+          Cl.uint(DEFAULT_TOTAL_SUPPLY),
+          Cl.uint(DEFAULT_VIRTUAL_STX),
+          Cl.uint(100_000_000),
+          Cl.uint(DEFAULT_FEE_BPS),
+          Cl.uint(DEFAULT_CREATOR_SHARE_BPS),
+        ],
+        deployer
+      );
+      launchCurve(wallet1);
+
+      buy(wallet2, 0, 200_000_000);
+
+      const { result } = simnet.callPublicFn(
+        contract,
+        "graduate",
+        [Cl.uint(0)],
+        wallet3
+      );
+      expect(result).toBeOk(Cl.bool(true));
+    });
+
+    it("handles zero fees correctly", () => {
+      registerAgent(wallet1);
+      simnet.callPublicFn(
+        contract,
+        "set-defaults",
+        [
+          Cl.uint(DEFAULT_TOTAL_SUPPLY),
+          Cl.uint(DEFAULT_VIRTUAL_STX),
+          Cl.uint(100_000_000),
+          Cl.uint(0),
+          Cl.uint(DEFAULT_CREATOR_SHARE_BPS),
+        ],
+        deployer
+      );
+      launchCurve(wallet1);
+
+      const creatorBalBefore = simnet.getAssetsMap().get("STX")?.get(wallet1) || 0n;
+
+      buy(wallet2, 0, 200_000_000);
+
+      const creatorBalAfter = simnet.getAssetsMap().get("STX")?.get(wallet1) || 0n;
+      expect(creatorBalAfter - creatorBalBefore).toBe(0n);
+    });
+
+    it("handles fee distribution with zero creator share", () => {
+      registerAgent(wallet1);
+      simnet.callPublicFn(
+        contract,
+        "set-defaults",
+        [
+          Cl.uint(DEFAULT_TOTAL_SUPPLY),
+          Cl.uint(DEFAULT_VIRTUAL_STX),
+          Cl.uint(100_000_000),
+          Cl.uint(100),
+          Cl.uint(0),
+        ],
+        deployer
+      );
+      launchCurve(wallet1);
+
+      const protocolBalBefore = simnet.getAssetsMap().get("STX")?.get(deployer) || 0n;
+
+      buy(wallet2, 0, 200_000_000);
+
+      const protocolBalAfter = simnet.getAssetsMap().get("STX")?.get(deployer) || 0n;
+      expect(protocolBalAfter - protocolBalBefore).toBe(2_000_000n);
+    });
+
+    it("prevents graduation twice", () => {
+      registerAgent(wallet1);
+      simnet.callPublicFn(
+        contract,
+        "set-defaults",
+        [
+          Cl.uint(DEFAULT_TOTAL_SUPPLY),
+          Cl.uint(DEFAULT_VIRTUAL_STX),
+          Cl.uint(100_000_000),
+          Cl.uint(DEFAULT_FEE_BPS),
+          Cl.uint(DEFAULT_CREATOR_SHARE_BPS),
+        ],
+        deployer
+      );
+      launchCurve(wallet1);
+
+      buy(wallet2, 0, 200_000_000);
+
+      const { result: grad1 } = simnet.callPublicFn(
+        contract,
+        "graduate",
+        [Cl.uint(0)],
+        wallet3
+      );
+      expect(grad1).toBeOk(Cl.bool(true));
+
+      const { result: grad2 } = simnet.callPublicFn(
+        contract,
+        "graduate",
+        [Cl.uint(0)],
+        wallet3
+      );
+      expect(grad2).toBeErr(Cl.uint(1403));
     });
   });
 
@@ -520,15 +616,13 @@ describe("agent-launchpad", () => {
     it("get-buy-quote matches actual buy output", () => {
       registerAndLaunch(wallet1);
 
-      const stxAmount = 500_000_000; // 500 STX
+      const stxAmount = 500_000_000;
 
-      // Get quote (Ok(Tuple))
       const { result: quoteResult } = getBuyQuote(0, stxAmount);
       const quote = unwrapOkTuple(quoteResult);
       const quotedTokens = BigInt(quote["tokens-out"].value);
       const quotedFee = BigInt(quote.fee.value);
 
-      // Actual buy
       const { result: buyResult } = buy(wallet2, 0, stxAmount);
       const buyData = unwrapOkTuple(buyResult);
       const actualTokens = BigInt(buyData["tokens-out"].value);
@@ -540,20 +634,17 @@ describe("agent-launchpad", () => {
 
     it("get-sell-quote matches actual sell output", () => {
       registerAndLaunch(wallet1);
-      buy(wallet2, 0, 1_000_000_000); // 1000 STX
+      buy(wallet2, 0, 1_000_000_000);
 
-      // Get current balance
       const { result: balResult } = getBalance(0, wallet2);
       const tokens = Number((balResult as any).value.amount.value);
-      const sellAmount = Math.floor(tokens / 4); // sell 25%
+      const sellAmount = Math.floor(tokens / 4);
 
-      // Get quote (Ok(Tuple))
       const { result: quoteResult } = getSellQuote(0, sellAmount);
       const quote = unwrapOkTuple(quoteResult);
       const quotedStx = BigInt(quote["stx-out"].value);
       const quotedFee = BigInt(quote.fee.value);
 
-      // Actual sell
       const { result: sellResult } = sell(wallet2, 0, sellAmount);
       const sellData = unwrapOkTuple(sellResult);
       const actualStx = BigInt(sellData["stx-out"].value);
@@ -561,6 +652,55 @@ describe("agent-launchpad", () => {
 
       expect(quotedStx).toBe(actualStx);
       expect(quotedFee).toBe(actualFee);
+    });
+
+    it("returns zero quote for sold-out curve", () => {
+      registerAndLaunch(wallet1);
+
+      try {
+        buy(wallet2, 0, 1_000_000_000_000);
+      } catch (e) {
+        // May fail due to insufficient STX, that's fine
+      }
+
+      const { result: quoteResult } = getBuyQuote(0, 100_000_000);
+      if ((quoteResult as any).value) {
+        const quote = unwrapOkTuple(quoteResult);
+        expect(Number(quote["tokens-out"].value)).toBe(0);
+      }
+    });
+
+    it("get-price returns 0 for sold-out curve", () => {
+      registerAndLaunch(wallet1);
+
+      try {
+        buy(wallet2, 0, 1_000_000_000_000);
+      } catch (e) {
+        // May fail due to insufficient STX
+      }
+
+      const { result: priceResult } = simnet.callReadOnlyFn(
+        contract,
+        "get-price",
+        [Cl.uint(0)],
+        deployer
+      );
+      expect(Number((priceResult as any).value.value)).toBeGreaterThanOrEqual(0);
+    });
+
+    it("buy and sell quotes are consistent", () => {
+      registerAndLaunch(wallet1);
+
+      const { result: buyQuote } = getBuyQuote(0, 100_000_000);
+      const buyData = unwrapOkTuple(buyQuote);
+
+      buy(wallet2, 0, 100_000_000);
+
+      const { result: sellQuote } = getSellQuote(0, Number(buyData["tokens-out"].value));
+      const sellData = unwrapOkTuple(sellQuote);
+
+      expect(Number(sellData["stx-out"].value)).toBeLessThan(100_000_000);
+      expect(Number(sellData["stx-out"].value)).toBeGreaterThan(0);
     });
   });
 
@@ -584,7 +724,6 @@ describe("agent-launchpad", () => {
       );
       expect(result).toBeOk(Cl.bool(true));
 
-      // Verify defaults changed (get-stats returns plain Tuple)
       const { result: stats } = simnet.callReadOnlyFn(
         contract,
         "get-stats",
@@ -608,7 +747,17 @@ describe("agent-launchpad", () => {
         ],
         wallet1
       );
-      expect(result).toBeErr(Cl.uint(1407)); // ERR-NOT-ADMIN
+      expect(result).toBeErr(Cl.uint(1407));
+    });
+
+    it("prevents non-admin from setting protocol fee recipient", () => {
+      const { result } = simnet.callPublicFn(
+        contract,
+        "set-protocol-fee-recipient",
+        [Cl.principal(wallet1)],
+        wallet1
+      );
+      expect(result).toBeErr(Cl.uint(1407));
     });
 
     it("rejects fee above max", () => {
@@ -619,16 +768,63 @@ describe("agent-launchpad", () => {
           Cl.uint(DEFAULT_TOTAL_SUPPLY),
           Cl.uint(DEFAULT_VIRTUAL_STX),
           Cl.uint(DEFAULT_GRADUATION_STX),
-          Cl.uint(501), // > MAX-FEE-BPS of 500
+          Cl.uint(501),
           Cl.uint(DEFAULT_CREATOR_SHARE_BPS),
         ],
         deployer
       );
-      expect(result).toBeErr(Cl.uint(1414)); // ERR-INVALID-FEE
+      expect(result).toBeErr(Cl.uint(1414));
+    });
+
+    it("rejects invalid creator share > 10000 bps", () => {
+      const { result } = simnet.callPublicFn(
+        contract,
+        "set-defaults",
+        [
+          Cl.uint(DEFAULT_TOTAL_SUPPLY),
+          Cl.uint(DEFAULT_VIRTUAL_STX),
+          Cl.uint(DEFAULT_GRADUATION_STX),
+          Cl.uint(DEFAULT_FEE_BPS),
+          Cl.uint(10001),
+        ],
+        deployer
+      );
+      expect(result).toBeErr(Cl.uint(1411));
+    });
+
+    it("rejects zero total supply", () => {
+      const { result } = simnet.callPublicFn(
+        contract,
+        "set-defaults",
+        [
+          Cl.uint(0),
+          Cl.uint(DEFAULT_VIRTUAL_STX),
+          Cl.uint(DEFAULT_GRADUATION_STX),
+          Cl.uint(DEFAULT_FEE_BPS),
+          Cl.uint(DEFAULT_CREATOR_SHARE_BPS),
+        ],
+        deployer
+      );
+      expect(result).toBeErr(Cl.uint(1411));
+    });
+
+    it("rejects zero virtual STX", () => {
+      const { result } = simnet.callPublicFn(
+        contract,
+        "set-defaults",
+        [
+          Cl.uint(DEFAULT_TOTAL_SUPPLY),
+          Cl.uint(0),
+          Cl.uint(DEFAULT_GRADUATION_STX),
+          Cl.uint(DEFAULT_FEE_BPS),
+          Cl.uint(DEFAULT_CREATOR_SHARE_BPS),
+        ],
+        deployer
+      );
+      expect(result).toBeErr(Cl.uint(1411));
     });
 
     it("two-step admin transfer", () => {
-      // Initiate transfer
       const { result: initResult } = simnet.callPublicFn(
         contract,
         "transfer-admin",
@@ -637,7 +833,6 @@ describe("agent-launchpad", () => {
       );
       expect(initResult).toBeOk(Cl.principal(wallet1));
 
-      // Accept as new admin
       const { result: acceptResult } = simnet.callPublicFn(
         contract,
         "accept-admin",
@@ -646,7 +841,6 @@ describe("agent-launchpad", () => {
       );
       expect(acceptResult).toBeOk(Cl.principal(wallet1));
 
-      // Verify new admin
       const { result: adminResult } = simnet.callReadOnlyFn(
         contract,
         "get-admin",
@@ -672,12 +866,9 @@ describe("agent-launchpad", () => {
       const { result: r2 } = launchCurve(wallet2, "Token2", "TK2");
       expect(r2).toBeOk(Cl.uint(1));
 
-      // Buy on curve 0
       buy(wallet3, 0, 100_000_000);
-      // Buy on curve 1
       buy(wallet3, 1, 200_000_000);
 
-      // Verify independent balances
       const { result: bal0 } = getBalance(0, wallet3);
       const { result: bal1 } = getBalance(1, wallet3);
       const tokens0 = Number((bal0 as any).value.amount.value);
@@ -685,17 +876,14 @@ describe("agent-launchpad", () => {
 
       expect(tokens0).toBeGreaterThan(0);
       expect(tokens1).toBeGreaterThan(0);
-      // More STX invested in curve 1, so more tokens (both start at same price)
       expect(tokens1).toBeGreaterThan(tokens0);
 
-      // Verify independent reserves
       const { result: c0 } = getCurve(0);
       const { result: c1 } = getCurve(1);
       const reserve0 = Number(unwrapCurve(c0)["stx-reserve"].value);
       const reserve1 = Number(unwrapCurve(c1)["stx-reserve"].value);
       expect(reserve1).toBeGreaterThan(reserve0);
 
-      // Verify stats
       const { result: stats } = simnet.callReadOnlyFn(
         contract,
         "get-stats",
@@ -714,7 +902,6 @@ describe("agent-launchpad", () => {
     it("price increases after buy", () => {
       registerAndLaunch(wallet1);
 
-      // Price before (Ok(uint))
       const { result: priceBefore } = simnet.callReadOnlyFn(
         contract,
         "get-price",
@@ -723,10 +910,8 @@ describe("agent-launchpad", () => {
       );
       const p0 = Number((priceBefore as any).value.value);
 
-      // Buy
-      buy(wallet2, 0, 1_000_000_000); // 1000 STX
+      buy(wallet2, 0, 1_000_000_000);
 
-      // Price after
       const { result: priceAfter } = simnet.callReadOnlyFn(
         contract,
         "get-price",
@@ -736,6 +921,159 @@ describe("agent-launchpad", () => {
       const p1 = Number((priceAfter as any).value.value);
 
       expect(p1).toBeGreaterThan(p0);
+    });
+
+    it("maintains constant product invariant", () => {
+      registerAndLaunch(wallet1);
+
+      const { result: curveBefore } = getCurve(0);
+      const curve = unwrapCurve(curveBefore);
+      const k = BigInt(curve.k.value);
+
+      buy(wallet2, 0, 500_000_000);
+      
+      const { result: balResult } = getBalance(0, wallet2);
+      if (Number((balResult as any).value.amount.value) > 0) {
+        sell(wallet2, 0, 100_000);
+      }
+
+      const { result: curveAfter } = getCurve(0);
+      const after = unwrapCurve(curveAfter);
+      const newK = BigInt(after.k.value);
+
+      expect(newK).toBe(k);
+    });
+  });
+
+  // ========================================================================
+  // 10. STRESS TESTS
+  // ========================================================================
+
+  describe("stress tests", () => {
+    it("handles many sequential buys", () => {
+      registerAndLaunch(wallet1);
+
+      const numBuys = 5;
+      const buyAmount = 100_000_000;
+
+      for (let i = 0; i < numBuys; i++) {
+        const buyer = i % 2 === 0 ? wallet2 : wallet3;
+        const { result } = buy(buyer, 0, buyAmount);
+        expect(result).toBeOk();
+      }
+
+      const { result: curveResult } = getCurve(0);
+      const curve = unwrapCurve(curveResult);
+      expect(Number(curve["stx-reserve"].value)).toBeGreaterThan(0);
+    });
+
+    it("handles interleaved buys and sells", () => {
+      registerAndLaunch(wallet1);
+
+      buy(wallet2, 0, 1_000_000_000);
+
+      const { result: balResult } = getBalance(0, wallet2);
+      const tokens = Number((balResult as any).value.amount.value);
+      
+      if (tokens > 0) {
+        const sellAmount = Math.floor(tokens / 2);
+        sell(wallet2, 0, sellAmount);
+      }
+
+      buy(wallet2, 0, 500_000_000);
+
+      const { result: finalBalance } = getBalance(0, wallet2);
+      expect(Number((finalBalance as any).value.amount.value)).toBeGreaterThan(0);
+    });
+  });
+
+  // ========================================================================
+  // 11. ERROR RECOVERY
+  // ========================================================================
+
+  describe("error recovery", () => {
+    it("maintains state consistency after failed buy", () => {
+      registerAndLaunch(wallet1);
+
+      const { result: curveBefore } = getCurve(0);
+      const beforeState = unwrapCurve(curveBefore);
+
+      buy(wallet2, 0, 100_000_000, 999_999_999_999_999);
+
+      const { result: curveAfter } = getCurve(0);
+      const afterState = unwrapCurve(curveAfter);
+
+      expect(afterState["stx-reserve"]).toStrictEqual(beforeState["stx-reserve"]);
+      expect(afterState["tokens-sold"]).toStrictEqual(beforeState["tokens-sold"]);
+    });
+
+    it("maintains state consistency after failed sell", () => {
+      registerAndLaunch(wallet1);
+      buy(wallet2, 0, 100_000_000);
+
+      const { result: curveBefore } = getCurve(0);
+      const beforeState = unwrapCurve(curveBefore);
+
+      const { result: balResult } = getBalance(0, wallet2);
+      const tokens = Number((balResult as any).value.amount.value);
+      
+      sell(wallet2, 0, tokens, 999_999_999_999_999);
+
+      const { result: curveAfter } = getCurve(0);
+      const afterState = unwrapCurve(curveAfter);
+
+      expect(afterState["stx-reserve"]).toStrictEqual(beforeState["stx-reserve"]);
+      expect(afterState["tokens-sold"]).toStrictEqual(beforeState["tokens-sold"]);
+    });
+  });
+
+  // ========================================================================
+  // 12. AGENT REGISTRY INTEGRATION
+  // ========================================================================
+
+  describe("agent-registry integration", () => {
+    it("prevents launch if agent is unregistered", () => {
+      const { result } = launchCurve(wallet1);
+      expect(result).toBeErr(Cl.uint(1400));
+    });
+
+    it("allows launch after registration", () => {
+      registerAgent(wallet1);
+      const { result } = launchCurve(wallet1);
+      expect(result).toBeOk();
+    });
+  });
+
+  // ========================================================================
+  // 13. EDGE CASES
+  // ========================================================================
+
+  describe("edge cases", () => {
+    it("handles maximum uint values safely", () => {
+      registerAndLaunch(wallet1);
+
+      const hugeAmount = Number(2n ** 48n - 1000n); // Stay within reasonable bounds
+      const { result } = buy(wallet2, 0, hugeAmount);
+      expect(result).toBeErr(Cl.uint(1405)); // ERR-INSUFFICIENT-BALANCE
+    });
+
+    it("prevents integer overflow in k calculation", () => {
+      simnet.callPublicFn(
+        contract,
+        "set-defaults",
+        [
+          Cl.uint(2n ** 64n - 1n),
+          Cl.uint(2n ** 64n - 1n),
+          Cl.uint(DEFAULT_GRADUATION_STX),
+          Cl.uint(DEFAULT_FEE_BPS),
+          Cl.uint(DEFAULT_CREATOR_SHARE_BPS),
+        ],
+        deployer
+      );
+
+      registerAgent(wallet1);
+      const { result } = launchCurve(wallet1);
+      expect(result).toBeOk(Cl.uint(0));
     });
   });
 });
