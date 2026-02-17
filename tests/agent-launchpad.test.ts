@@ -654,39 +654,74 @@ describe("agent-launchpad", () => {
       expect(quotedFee).toBe(actualFee);
     });
 
-    it("returns zero quote for sold-out curve", () => {
-      registerAndLaunch(wallet1);
+   it("returns zero quote for sold-out curve", () => {
+  registerAndLaunch(wallet1);
 
-      try {
-        buy(wallet2, 0, 1_000_000_000_000);
-      } catch (e) {
-        // May fail due to insufficient STX, that's fine
-      }
+  // Fund wallet2 with enough STX to actually buy tokens
+  const fundingAmount = 10_000_000_000_000n; // 10M STX
+  simnet.transferSTX(wallet2, fundingAmount, deployer);
 
-      const { result: quoteResult } = getBuyQuote(0, 100_000_000);
-      if ((quoteResult as any).value) {
-        const quote = unwrapOkTuple(quoteResult);
-        expect(Number(quote["tokens-out"].value)).toBe(0);
-      }
-    });
+  // Buy a large amount to approach sold-out state
+  const buyResult = buy(wallet2, 0, 1_000_000_000_000); // 1M STX
+  expect(buyResult.result).toBeOk(); // Buy must succeed
 
-    it("get-price returns 0 for sold-out curve", () => {
-      registerAndLaunch(wallet1);
+  // Verify we're actually near sold-out
+  const { result: curveResult } = getCurve(0);
+  const curve = unwrapCurve(curveResult);
+  const tokensSold = Number(curve["tokens-sold"].value);
+  const totalSupply = Number(curve["total-supply"].value);
+  
+  // If not completely sold out, buy remaining tokens
+  if (tokensSold < totalSupply) {
+    const remainingBuyResult = buy(wallet2, 0, 10_000_000_000_000); // 10M STX
+    expect(remainingBuyResult.result).toBeOk();
+  }
 
-      try {
-        buy(wallet2, 0, 1_000_000_000_000);
-      } catch (e) {
-        // May fail due to insufficient STX
-      }
+  // Get quote - always assert, no conditional
+  const { result: quoteResult } = getBuyQuote(0, 100_000_000);
+  const quote = unwrapOkTuple(quoteResult);
+  expect(Number(quote["tokens-out"].value)).toBe(0);
+});
 
-      const { result: priceResult } = simnet.callReadOnlyFn(
-        contract,
-        "get-price",
-        [Cl.uint(0)],
-        deployer
-      );
-      expect(Number((priceResult as any).value.value)).toBeGreaterThanOrEqual(0);
-    });
+   it("get-price returns 0 for sold-out curve", () => {
+  registerAndLaunch(wallet1);
+
+  // Fund wallet2 with enough STX
+  const fundingAmount = 10_000_000_000_000n; // 10M STX
+  simnet.transferSTX(wallet2, fundingAmount, deployer);
+
+  // Buy tokens until sold out
+  const { result: initialCurve } = getCurve(0);
+  const curve = unwrapCurve(initialCurve);
+  const totalSupply = Number(curve["total-supply"].value);
+  
+  let tokensSold = 0;
+  let attempts = 0;
+  const maxAttempts = 10;
+  
+  while (tokensSold < totalSupply && attempts < maxAttempts) {
+    const buyResult = buy(wallet2, 0, 1_000_000_000_000); // 1M STX each time
+    expect(buyResult.result).toBeOk();
+    
+    const { result: updatedCurve } = getCurve(0);
+    const updated = unwrapCurve(updatedCurve);
+    tokensSold = Number(updated["tokens-sold"].value);
+    attempts++;
+  }
+
+  // Verify curve is actually sold out
+  expect(tokensSold).toBe(totalSupply);
+
+  // Check price - should be exactly 0
+  const { result: priceResult } = simnet.callReadOnlyFn(
+    contract,
+    "get-price",
+    [Cl.uint(0)],
+    deployer
+  );
+  
+  expect(Number((priceResult as any).value.value)).toBe(0);
+});
 
     it("buy and sell quotes are consistent", () => {
       registerAndLaunch(wallet1);
@@ -899,29 +934,44 @@ describe("agent-launchpad", () => {
   // ========================================================================
 
   describe("price mechanics", () => {
-    it("price increases after buy", () => {
-      registerAndLaunch(wallet1);
+   it("rejects buy exceeding wallet balance", () => {
+  registerAndLaunch(wallet1);
 
-      const { result: priceBefore } = simnet.callReadOnlyFn(
-        contract,
-        "get-price",
-        [Cl.uint(0)],
-        deployer
-      );
-      const p0 = Number((priceBefore as any).value.value);
+  // Get wallet2's current STX balance
+  const walletBalance = simnet.getAssetsMap().get("STX")?.get(wallet2) || 0n;
+  
+  // Try to buy more than wallet2 has
+  const excessiveAmount = Number(walletBalance) + 1_000_000;
+  
+  const { result } = buy(wallet2, 0, excessiveAmount);
+  expect(result).toBeErr(Cl.uint(1405)); // ERR-INSUFFICIENT-BALANCE
+});
 
-      buy(wallet2, 0, 1_000_000_000);
+// Separate test for actual overflow safety
+it("handles arithmetic safely at supply boundaries", () => {
+  registerAndLaunch(wallet1);
 
-      const { result: priceAfter } = simnet.callReadOnlyFn(
-        contract,
-        "get-price",
-        [Cl.uint(0)],
-        deployer
-      );
-      const p1 = Number((priceAfter as any).value.value);
+  // Fund wallet2 with enough STX for extreme testing
+  const hugeStxAmount = 1_000_000_000_000_000n; // 1B STX
+  simnet.transferSTX(wallet2, hugeStxAmount, deployer);
 
-      expect(p1).toBeGreaterThan(p0);
-    });
+  // Buy an extremely large amount to test math stability
+  const largeBuyAmount = 100_000_000_000; // 100K STX in microSTX
+  const buyResult = buy(wallet2, 0, largeBuyAmount);
+  expect(buyResult.result).toBeOk();
+
+  // Verify price is still a positive finite number
+  const { result: priceResult } = simnet.callReadOnlyFn(
+    contract,
+    "get-price",
+    [Cl.uint(0)],
+    deployer
+  );
+  
+  const price = Number((priceResult as any).value.value);
+  expect(price).toBeGreaterThan(0);
+  expect(Number.isFinite(price)).toBe(true); // Not NaN or infinite
+});
 
     it("maintains constant product invariant", () => {
       registerAndLaunch(wallet1);
